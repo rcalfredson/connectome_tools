@@ -1,68 +1,158 @@
 from anytree import Node
 import numpy as np
 from anytree import LevelOrderGroupIter, Node
+from scipy.sparse import csr_matrix
 from .traverse import BaseTraverse
 
 
-def to_transmission_matrix(adj, p, method="uniform", in_weights=None):
+def to_transmission_matrix(
+    sparse_matrix,
+    p,
+    method="uniform",
+    memmap_file="transition_probs.dat",
+    print_frequency=10000,
+):
+    """
+    Convert a large sparse adjacency matrix into a transmission probability matrix incrementally,
+    storing the result in a memory-mapped file. This is a scalable approach to accommodate very
+    large matrices.
 
-    neg_inds = np.where(adj.sum(axis=1)<0)[0] # negative edges indicate inhibitory connections
-    adj = adj.copy() 
-    adj = np.abs(adj) # convert to positive values for probs calculation
+    Parameters
+    ----------
+    sparse_matrix : scipy.sparse.csr_matrix
+        The sparse adjacency matrix of shape (N, N).
+    p : float
+        The probability parameter used to compute transmission probabilities.
+    method : str, default="uniform"
+        Currently only "uniform" is supported. If another method is passed, NotImplementedError is raised.
+    memmap_file : str, default="transition_probs.dat"
+        The path of the memory-mapped file to write the transmission probability matrix to.
+    print_frequency : int, default=10000
+        Frequency of status updates on processed rows.
 
-    if method == "uniform":
-        not_probs = (
-            1 - p
-        ) ** adj  # probability of none of the synapses causing postsynaptic
-        probs = 1 - not_probs  # probability of ANY of the synapses firing onto next
-        
-        for i in neg_inds:
-            probs[i] = -probs[i] # restore negative edges
-            probs[probs==-0] = 0 # prevent -0 values
+    Returns
+    -------
+    np.memmap
+        A memory-mapped array of shape (N, N) containing the transmission probabilities.
+        Inhibitory rows will have negative probabilities as per the original logic.
+    """
+    if method != "uniform":
+        raise NotImplementedError(
+            "Currently only the 'uniform' method is supported in this sparse version."
+        )
 
-    elif method == "input_weighted":
-        raise NotImplementedError()
-        alpha = p
-        flat = np.full(adj.shape, alpha)
-        # deg = meta["dendrite_input"].values
-        in_weights[in_weights == 0] = 1
-        flat = flat / in_weights[None, :]
-        not_probs = np.power((1 - flat), adj)
-        probs = 1 - not_probs
-    return probs
+    # Ensure CSR format
+    if not isinstance(sparse_matrix, csr_matrix):
+        sparse_matrix = sparse_matrix.tocsr()
+
+    shape = sparse_matrix.shape
+    N = shape[0]
+
+    # Determine which nodes are inhibitory by summing each row
+    # Negative row sum indicates inhibitory node.
+    print("Determining inhibitory nodes...")
+    row_sums = np.zeros(N, dtype=np.float64)
+    for i in range(N):
+        row_start = sparse_matrix.indptr[i]
+        row_end = sparse_matrix.indptr[i + 1]
+        if row_end > row_start:
+            row_sums[i] = np.sum(sparse_matrix.data[row_start:row_end])
+        # If no entries, sum is 0 by default
+    neg_inds = np.where(row_sums < 0)[0]
+    neg_set = set(neg_inds)
+
+    # Create a memmap for probabilities
+    print(f"Creating memmap for probabilities at {memmap_file}, shape={shape}...")
+    probs_memmap = np.memmap(memmap_file, dtype=np.float32, mode="w+", shape=shape)
+
+    # Initialize the entire memmap to 0.0 (optional if desired)
+    # This may be costly for very large arrays; you can skip this initialization.
+    # probs_memmap[:] = 0.0
+    # probs_memmap.flush()
+
+    print("Computing transmission probabilities row by row...")
+    for i in range(N):
+        row_start = sparse_matrix.indptr[i]
+        row_end = sparse_matrix.indptr[i + 1]
+
+        # Set the row to zero first (if you didn't do a global initialization)
+        probs_memmap[i, :] = 0.0
+
+        if row_end > row_start:
+            cols = sparse_matrix.indices[row_start:row_end]
+            values = sparse_matrix.data[row_start:row_end]
+
+            # Take absolute values for the probability calculation
+            abs_values = np.abs(values)
+            # Compute the probability that no synapse fires: (1 - p)^abs_values
+            not_probs_values = np.power((1 - p), abs_values, dtype=np.float32)
+            # Probability that at least one synapse fires: 1 - not_probs
+            probs_values = 1.0 - not_probs_values
+
+            # If node is inhibitory, negate the probabilities
+            if i in neg_set:
+                probs_values = -probs_values
+                # Fix any -0.0 values to 0.0, as original code does
+                probs_values[probs_values == -0.0] = 0.0
+
+            # Store computed probabilities in the memmap
+            probs_memmap[i, cols] = probs_values
+
+        if (i % print_frequency) == 0 and i > 0:
+            print(f"Processed {i} out of {N} rows")
+
+    probs_memmap.flush()
+    print("Transmission probability memmap created successfully.")
+    return probs_memmap
 
 
 class Cascade(BaseTraverse):
     def _choose_next(self):
-        node_transition_probs = self.transition_probs.copy()
-
-        # identify active inhibitory nodes and deduct transition probs from active excitatory nodes
+        # Identify active inhibitory nodes
         all_neg_inds = self.neg_inds
-
-        neg_inds_active = np.intersect1d(self._active, all_neg_inds) # identify active inhibitory nodes
-        if(len(neg_inds_active)>0):
-
-            # sum all activate negative edges if multiple activate negative nodes
-            if(len(np.shape(node_transition_probs[neg_inds_active]))>1):
-                summed_neg = node_transition_probs[neg_inds_active].sum(axis=0) 
-                node_transition_probs[self._active] = node_transition_probs[self._active] + summed_neg # reduce probability of activating positive edges by magnitude of sum of negative edges
-
-            # if only one activate negative node
-            else:
-                node_transition_probs[self._active] = node_transition_probs[self._active] + node_transition_probs[neg_inds_active] # reduce probability of activating positive edges by magnitude of negative edges
-        
-        # where the probabilistic signal transmission occurs
-        # probs must be positive, so all negative values are converted to zero
-        node_transition_probs[node_transition_probs<0] = 0
-
-        # identify active excitatory nodes, use only those
+        neg_inds_active = np.intersect1d(self._active, all_neg_inds)
+        # Identify active excitatory nodes
         active_excitatory = np.setdiff1d(self._active, all_neg_inds)
-        node_transition_probs = node_transition_probs[active_excitatory]
 
-        transmission_indicator = np.random.binomial(
-            np.ones(node_transition_probs.shape, dtype=int), node_transition_probs
+        # If no active excitatory nodes, nothing can propagate.
+        if len(active_excitatory) == 0:
+            return None
+
+        # We'll build node_transition_probs only for the active excitatory subset.
+        # This avoids loading the entire NxN array.
+        n_targets = self.transition_probs.shape[1]
+        node_transition_probs = np.zeros(
+            (len(active_excitatory), n_targets), dtype=self.transition_probs.dtype
         )
+
+        # Load excitatory rows from memmap
+        # This is a subset of rows, hopefully small
+        for i, node_idx in enumerate(active_excitatory):
+            node_transition_probs[i, :] = self.transition_probs[node_idx, :]
+
+        # If inhibitory nodes are active, sum up their rows to get the inhibitory influence.
+        if len(neg_inds_active) > 0:
+            summed_neg = np.zeros(n_targets, dtype=self.transition_probs.dtype)
+            for neg_node in neg_inds_active:
+                # Add this inhibitory node's row to summed_neg
+                summed_neg += self.transition_probs[neg_node, :]
+
+            # Apply the inhibitory influence to all active excitatory rows
+            node_transition_probs += summed_neg
+
+        # Clip negative probabilities to zero
+        # Now node_transition_probs corresponds only to excitatory rows
+        node_transition_probs[node_transition_probs < 0] = 0
+
+        # Probabilistic transmission sampling
+        # Generate a binomial random draw for each edge from the active excitatory nodes
+        transmission_indicator = np.random.binomial(n=1, p=node_transition_probs)
+
+        # Find which nodes received a signal
+        # transmission_indicator is shape (len(active_excitatory), n_targets)
+        # We want columns where there's a '1' from any row
         nxt = np.unique(np.nonzero(transmission_indicator)[1])
+
         if len(nxt) > 0:
             return nxt
         else:
@@ -86,31 +176,47 @@ class Cascade(BaseTraverse):
 
 
 def generate_cascade_paths(
-    start_ind, all_start_inds, probs, depth, stop_inds=[], visited=[], max_depth=10 # added all_start_inds
+    start_ind,
+    all_start_inds,
+    probs,
+    depth,
+    stop_inds=[],
+    visited=[],
+    max_depth=10,  # added all_start_inds
 ):
     visited = visited.copy()
     visited.append(start_ind)
 
     probs = probs.copy()
-    neg_inds = np.where(probs.sum(axis=1)<0)[0] # identify nodes with negative edges
+    neg_inds = np.where(probs.sum(axis=1) < 0)[0]  # identify nodes with negative edges
 
-    if (depth < max_depth) and (start_ind not in stop_inds) and (start_ind not in neg_inds): # transmission not allowed through negative edges
+    if (
+        (depth < max_depth)
+        and (start_ind not in stop_inds)
+        and (start_ind not in neg_inds)
+    ):  # transmission not allowed through negative edges
 
-        neg_inds_active = np.intersect1d(all_start_inds, neg_inds) # identify active inhibitory nodes
-        if(len(neg_inds_active)>0):
+        neg_inds_active = np.intersect1d(
+            all_start_inds, neg_inds
+        )  # identify active inhibitory nodes
+        if len(neg_inds_active) > 0:
 
             # sum all activate negative edges if multiple activate negative nodes
-            if(len(np.shape(probs[neg_inds]))>1):
-                summed_neg = probs[neg_inds_active].sum(axis=0) 
-                probs[start_ind] = probs[start_ind] + summed_neg # reduce probability of activating positive edges by magnitude of sum of negative edges
+            if len(np.shape(probs[neg_inds])) > 1:
+                summed_neg = probs[neg_inds_active].sum(axis=0)
+                probs[start_ind] = (
+                    probs[start_ind] + summed_neg
+                )  # reduce probability of activating positive edges by magnitude of sum of negative edges
 
             # if only one activate negative node
             else:
-                probs[start_ind] = probs[start_ind] + probs[neg_inds_active] # reduce probability of activating positive edges by magnitude of negative edges
-        
+                probs[start_ind] = (
+                    probs[start_ind] + probs[neg_inds_active]
+                )  # reduce probability of activating positive edges by magnitude of negative edges
+
         # where the probabilistic signal transmission occurs
         # probs must be positive, so all negative values are converted to zero
-        probs[probs<0] = 0
+        probs[probs < 0] = 0
 
         transmission_indicator = np.random.binomial(
             np.ones(len(probs), dtype=int), probs[start_ind]
