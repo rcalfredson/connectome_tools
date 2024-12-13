@@ -9,7 +9,7 @@ Installation and setup
 connectome tools can be installed via pip:
 
 ```
-pip install git+https://github.com/mwinding/connectome_tools
+pip install git+https://github.com/rcalfredson/connectome_tools
 ```
 
 Classes can be imported as follows:
