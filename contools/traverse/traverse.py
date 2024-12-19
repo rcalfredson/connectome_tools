@@ -181,10 +181,26 @@ class BaseTraverse:
             self._update_state(self._active)
             if self._check_stop_nodes():
                 nxt = self._choose_next()
+                nxt = self._post_process_active_nodes(nxt)
                 self._active = nxt
             else:
                 nxt = None
             return nxt
+        
+    def _post_process_active_nodes(self, nxt):
+        """Hook method to allow subclasses to modify the set of active nodes.
+        
+        Parameters
+        ----------
+        nxt : np.ndarray or None
+            The next set of active nodes determined by _choose_next.
+        
+        Returns
+        -------
+        np.ndarray or None
+            Potentially modified set of active nodes.
+        """
+        return nxt
 
     def start(self, start_node):
         self._reset()

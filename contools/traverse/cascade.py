@@ -107,6 +107,28 @@ def to_transmission_matrix(
 
 
 class Cascade(BaseTraverse):
+    def __init__(
+        self,
+        transition_probs,
+        stop_nodes=[],
+        max_hops=10,
+        hit_hist=None,
+        record_traversal=True,
+        allow_loops=True,
+        start_node_persistence=1,
+    ):
+        super().__init__(
+            transition_probs=transition_probs,
+            stop_nodes=stop_nodes,
+            max_hops=max_hops,
+            hit_hist=hit_hist,
+            record_traversal=record_traversal,
+            allow_loops=allow_loops,
+        )
+        self.start_node_persistence = start_node_persistence
+        self._initial_active = None
+        self._initial_active_duration = 0
+
     def _choose_next(self):
         # Identify active inhibitory nodes
         all_neg_inds = self.neg_inds
@@ -161,10 +183,26 @@ class Cascade(BaseTraverse):
     def start(self, start_node):
         if isinstance(start_node, int):
             start_node = np.array([start_node])
-            super().start(start_node)
         else:
             start_node = np.array(start_node)
-            super().start(start_node)
+        super().start(start_node)
+        self._initial_active = start_node
+        self._initial_active_duration = self.start_node_persistence
+
+    def _post_process_active_nodes(self, nxt):
+        # If we still have duration left for the initial active nodes,
+        # keep them active
+        if self._initial_active_duration > 1:
+            if nxt is None:
+                nxt = self._initial_active
+            else:
+                nxt = np.unique(np.concatenate((nxt, self._initial_active)))
+
+        # Decrement the duration after applying this step
+        if self._initial_active_duration > 0:
+            self._initial_active_duration -= 1
+
+        return nxt
 
     def _check_visited(self):
         self._active = np.setdiff1d(self._active, self._visited)
