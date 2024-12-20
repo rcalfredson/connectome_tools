@@ -1,5 +1,5 @@
 import numpy as np
-from .traverse import BaseTraverse
+from .base_traverse import BaseTraverse
 
 
 class RandomWalk(BaseTraverse):
