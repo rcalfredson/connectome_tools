@@ -2,6 +2,24 @@ import numpy as np
 import itertools
 import networkx as nx
 from tqdm import tqdm
+from multiprocessing import Pool
+from .cascade import Cascade, worker_init
+
+
+def _run_single_simulation(start_node):
+    # This function is executed in each worker.
+    # Cascade now uses the global data set by worker_init.
+    worker = Cascade(
+        # stop_nodes, max_hops, etc. are taken from globals inside Cascade __init__
+        hit_hist=None,
+        start_node_persistence=1,
+    )
+    hit_hist = np.zeros((worker.n_verts, worker.max_hops), dtype=int)
+    worker.start(start_node)
+    traversal = worker.traversal_
+    for level, nodes in enumerate(traversal):
+        hit_hist[nodes, level] += 1
+    return hit_hist
 
 
 def path_to_visits(paths, n_verts, from_order=True, out_inds=[]):
@@ -32,7 +50,7 @@ def to_path_graph(paths):
 def collapse_multigraph(multigraph):
     """REF : https://stackoverflow.com/questions/15590812/networkx-convert-multigraph-...
         into-simple-graph-with-weighted-edges
-    
+
     Parameters
     ----------
     multigraph : [type]
@@ -53,19 +71,56 @@ class TraverseDispatcher:
     def __init__(
         self, worker, *args, n_init=10, verbose=False, simultaneous=True, **kwargs
     ):
-        self._worker = worker(*args, **kwargs)
+        # Store arguments for use later
+        self._worker_class = worker
         self.n_init = n_init
         self.simultaneous = simultaneous
         self.verbose = verbose
+        # Create a worker instance just to derive dimensions, etc.
+        self._worker = worker(*args, **kwargs)
+        # Store them for passing to workers:
+        self.transition_probs = self._worker.transition_probs
+        self.neg_inds = (
+            self._worker.neg_inds if hasattr(self._worker, "neg_inds") else None
+        )
+        self.stop_nodes = self._worker.stop_nodes
+        self.max_hops = self._worker.max_hops
+        self.record_traversal = self._worker.record_traversal
+        self.allow_loops = self._worker.allow_loops
 
     def start(self, start_node, disable):
         worker = self._worker
-        hit_hist = np.zeros((worker.n_verts, worker.max_hops))
-        for i in tqdm(range(self.n_init), disable=disable):
-            worker.start(start_node)
-            traversal = worker.traversal_
-            for level, nodes in enumerate(traversal):
-                hit_hist[nodes, level] += 1
+        n_verts = worker.n_verts
+        max_hops = worker.max_hops
+
+        if not isinstance(self.transition_probs, np.memmap):
+            raise ValueError("transition_probs must be a memmap for sharing.")
+
+        transition_probs_file = self.transition_probs.filename
+        shape = self.transition_probs.shape
+
+        # Prepare arguments for each simulation
+        args_iter = [(start_node,) for _ in range(self.n_init)]
+
+        # Initialize pool
+        with Pool(
+            processes=4,
+            initializer=worker_init,
+            initargs=(
+                transition_probs_file,
+                shape,
+                self.neg_inds,
+                self.stop_nodes,
+                self.max_hops,
+                self.record_traversal,
+                self.allow_loops,
+            ),
+        ) as pool:
+            results = pool.starmap(_run_single_simulation, args_iter)
+
+        hit_hist = np.zeros((n_verts, max_hops), dtype=int)
+        for res in results:
+            hit_hist += res
         self.hit_hist_ = hit_hist
         return hit_hist
 
@@ -91,7 +146,7 @@ class BaseTraverse:
         allow_loops=True,
     ):
         """
-        
+
         Parameters
         ----------
         transition_probs : np.ndarray or dict or list
@@ -132,7 +187,7 @@ class BaseTraverse:
         else:
             return True
 
-    # maybe not going to be used
+    # maybe not going to be used
     def _not_neg(self):
         if self._active not in self.neg_inds:
             return True
@@ -152,16 +207,16 @@ class BaseTraverse:
 
     def _update_state(self, nxt):
         """Takes the next step in the walk and updates the state of the object
-        
+
         Parameters
         ----------
         nxt : node
-        
+
         Returns
         -------
         bool
             True if nxt was not None, meaning, advance the walk
-            False if the walk stopped because an advance could not be made 
+            False if the walk stopped because an advance could not be made
         """
         if nxt is not None:
             self._active = nxt
@@ -185,15 +240,15 @@ class BaseTraverse:
             else:
                 nxt = None
             return nxt
-        
+
     def _post_process_active_nodes(self, nxt):
         """Hook method to allow subclasses to modify the set of active nodes.
-        
+
         Parameters
         ----------
         nxt : np.ndarray or None
             The next set of active nodes determined by _choose_next.
-        
+
         Returns
         -------
         np.ndarray or None

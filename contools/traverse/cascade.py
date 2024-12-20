@@ -1,8 +1,43 @@
-from anytree import Node
 import numpy as np
-from anytree import LevelOrderGroupIter, Node
+from anytree import Node
+from anytree import LevelOrderGroupIter
 from scipy.sparse import csr_matrix
 from .traverse import BaseTraverse
+
+# Global references to avoid copying large arrays in each process
+GLOBAL_TRANSITION_PROBS = None
+GLOBAL_NEG_INDS = None
+GLOBAL_STOP_NODES = None
+GLOBAL_MAX_HOPS = None
+GLOBAL_RECORD_TRAVERSAL = None
+GLOBAL_ALLOW_LOOPS = None
+
+
+def worker_init(
+    transition_probs_file,
+    shape,
+    neg_inds,
+    stop_nodes,
+    max_hops,
+    record_traversal,
+    allow_loops,
+):
+    """
+    Initializer for worker processes.
+    This sets global variables so that each worker references the same shared arrays.
+    """
+    global GLOBAL_TRANSITION_PROBS, GLOBAL_NEG_INDS
+    global GLOBAL_STOP_NODES, GLOBAL_MAX_HOPS, GLOBAL_RECORD_TRAVERSAL, GLOBAL_ALLOW_LOOPS
+
+    # Memory-map the transition probabilities file (read-only)
+    GLOBAL_TRANSITION_PROBS = np.memmap(
+        transition_probs_file, dtype=np.float32, mode="r", shape=shape
+    )
+    GLOBAL_NEG_INDS = neg_inds
+    GLOBAL_STOP_NODES = stop_nodes
+    GLOBAL_MAX_HOPS = max_hops
+    GLOBAL_RECORD_TRAVERSAL = record_traversal
+    GLOBAL_ALLOW_LOOPS = allow_loops
 
 
 def to_transmission_matrix(
@@ -109,24 +144,38 @@ def to_transmission_matrix(
 class Cascade(BaseTraverse):
     def __init__(
         self,
-        transition_probs,
-        neg_inds,
-        stop_nodes=[],
+        transition_probs=None,
+        neg_inds=None,
+        stop_nodes=None,
         max_hops=10,
         hit_hist=None,
         record_traversal=True,
         allow_loops=True,
         start_node_persistence=1,
     ):
-        super().__init__(
-            transition_probs=transition_probs,
-            stop_nodes=stop_nodes,
-            max_hops=max_hops,
-            hit_hist=hit_hist,
-            record_traversal=record_traversal,
-            allow_loops=allow_loops,
+        tp = (
+            GLOBAL_TRANSITION_PROBS
+            if GLOBAL_TRANSITION_PROBS is not None
+            else transition_probs
         )
-        self.neg_inds = neg_inds
+        st = GLOBAL_STOP_NODES if GLOBAL_STOP_NODES is not None else stop_nodes
+        mh = GLOBAL_MAX_HOPS if GLOBAL_MAX_HOPS is not None else max_hops
+        rt = (
+            GLOBAL_RECORD_TRAVERSAL
+            if GLOBAL_RECORD_TRAVERSAL is not None
+            else record_traversal
+        )
+        al = GLOBAL_ALLOW_LOOPS if GLOBAL_ALLOW_LOOPS is not None else allow_loops
+        ni = GLOBAL_NEG_INDS if GLOBAL_NEG_INDS is not None else neg_inds
+        super().__init__(
+            transition_probs=tp,
+            stop_nodes=st if st is not None else [],
+            max_hops=mh,
+            hit_hist=hit_hist,
+            record_traversal=rt,
+            allow_loops=al,
+        )
+        self.neg_inds = ni
         self.start_node_persistence = start_node_persistence
         self._initial_active = None
         self._initial_active_duration = 0
