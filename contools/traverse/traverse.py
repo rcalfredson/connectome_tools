@@ -88,6 +88,7 @@ class TraverseDispatcher:
         self.max_hops = self._worker.max_hops
         self.record_traversal = self._worker.record_traversal
         self.allow_loops = self._worker.allow_loops
+        self.start_node_persistence = self._worker.start_node_persistence
 
     def start(self, start_node, disable):
         worker = self._worker
@@ -115,6 +116,7 @@ class TraverseDispatcher:
                 self.max_hops,
                 self.record_traversal,
                 self.allow_loops,
+                self.start_node_persistence
             ),
         ) as pool:
             hit_hist = np.zeros((n_verts, max_hops), dtype=int)

@@ -11,6 +11,7 @@ GLOBAL_STOP_NODES = None
 GLOBAL_MAX_HOPS = None
 GLOBAL_RECORD_TRAVERSAL = None
 GLOBAL_ALLOW_LOOPS = None
+GLOBAL_START_NODE_PERSISTENCE = None
 
 
 def worker_init(
@@ -21,6 +22,7 @@ def worker_init(
     max_hops,
     record_traversal,
     allow_loops,
+    start_node_persistence,
 ):
     """
     Initializer for worker processes.
@@ -28,6 +30,7 @@ def worker_init(
     """
     global GLOBAL_TRANSITION_PROBS, GLOBAL_NEG_INDS
     global GLOBAL_STOP_NODES, GLOBAL_MAX_HOPS, GLOBAL_RECORD_TRAVERSAL, GLOBAL_ALLOW_LOOPS
+    global GLOBAL_START_NODE_PERSISTENCE
 
     # Memory-map the transition probabilities file (read-only)
     GLOBAL_TRANSITION_PROBS = np.memmap(
@@ -38,6 +41,7 @@ def worker_init(
     GLOBAL_MAX_HOPS = max_hops
     GLOBAL_RECORD_TRAVERSAL = record_traversal
     GLOBAL_ALLOW_LOOPS = allow_loops
+    GLOBAL_START_NODE_PERSISTENCE = start_node_persistence
 
 
 def to_transmission_matrix(
@@ -151,7 +155,7 @@ class Cascade(BaseTraverse):
         hit_hist=None,
         record_traversal=True,
         allow_loops=True,
-        start_node_persistence=1,
+        start_node_persistence=None,
     ):
         tp = (
             GLOBAL_TRANSITION_PROBS
@@ -167,6 +171,11 @@ class Cascade(BaseTraverse):
         )
         al = GLOBAL_ALLOW_LOOPS if GLOBAL_ALLOW_LOOPS is not None else allow_loops
         ni = GLOBAL_NEG_INDS if GLOBAL_NEG_INDS is not None else neg_inds
+        sp = (
+            GLOBAL_START_NODE_PERSISTENCE
+            if GLOBAL_START_NODE_PERSISTENCE is not None
+            else start_node_persistence
+        )
         super().__init__(
             transition_probs=tp,
             stop_nodes=st if st is not None else [],
@@ -176,7 +185,7 @@ class Cascade(BaseTraverse):
             allow_loops=al,
         )
         self.neg_inds = ni
-        self.start_node_persistence = start_node_persistence
+        self.start_node_persistence = sp
         self._initial_active = None
         self._initial_active_duration = 0
 
