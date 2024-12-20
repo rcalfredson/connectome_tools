@@ -1,5 +1,4 @@
 # contools/traverse/base_traverse.py
-import numpy as np
 
 
 class BaseTraverse:
@@ -32,9 +31,8 @@ class BaseTraverse:
 
     def _check_visited(self):
         if not self.allow_loops:
-            return self._active not in self._visited
-        else:
-            return True
+            return all(node not in self._visited_set for node in self._active)
+        return True
 
     def _check_stop_conditions(self):
         check_items = [self._check_max_hops(), self._check_visited()]
@@ -43,18 +41,24 @@ class BaseTraverse:
     def _reset(self):
         self._hop = 0
         self._active = None
-        self._visited = np.array([])
         if self.record_traversal:
             self.traversal_ = []
+        if not self.allow_loops:
+            self._visited_set = set()
 
     def _update_state(self, nxt):
         if nxt is not None:
             self._active = nxt
             self._hop += 1
+
             if self.record_traversal:
                 self.traversal_.append(nxt)
+
             if not self.allow_loops:
-                self._visited = np.union1d(self._visited, nxt)
+                if not hasattr(self, "_visited_set"):
+                    self._visited_set = set()
+                self._visited_set.update(nxt)
+
             return True
         else:
             return False

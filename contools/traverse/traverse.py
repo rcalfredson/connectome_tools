@@ -137,4 +137,3 @@ class TraverseDispatcher:
             for s in start_nodes:
                 hop_hist += self.start(s, disable=disable)
         return hop_hist
-

@@ -181,51 +181,36 @@ class Cascade(BaseTraverse):
         self._initial_active_duration = 0
 
     def _choose_next(self):
-        # Identify active inhibitory nodes
         all_neg_inds = self.neg_inds
         neg_inds_active = np.intersect1d(self._active, all_neg_inds)
-        # Identify active excitatory nodes
         active_excitatory = np.setdiff1d(self._active, all_neg_inds)
 
-        # If no active excitatory nodes, nothing can propagate.
         if len(active_excitatory) == 0:
             return None
 
-        # We'll build node_transition_probs only for the active excitatory subset.
-        # This avoids loading the entire NxN array.
         n_targets = self.transition_probs.shape[1]
-        # Instead of a 2D node_transition_probs array:
         fired = np.zeros(n_targets, dtype=bool)
 
-        # If inhibitory nodes are active, precompute the summed_neg just once:
-        if len(neg_inds_active) > 0:
-            summed_neg = np.zeros(n_targets, dtype=self.transition_probs.dtype)
-            for neg_node in neg_inds_active:
-                summed_neg += self.transition_probs[neg_node, :]
-        else:
-            summed_neg = None
+        # Pre-compute inhibitory influence once
+        summed_neg = (
+            np.sum(self.transition_probs[neg_inds_active], axis=0)
+            if len(neg_inds_active) > 0
+            else None
+        )
 
-        # Process each excitatory node individually
         for node_idx in active_excitatory:
-            # Load the row for this node
             row_probs = self.transition_probs[node_idx, :].copy()
-
-            # If inhibitory influence exists, add it to this row
             if summed_neg is not None:
                 row_probs += summed_neg
-
-            # Clip negatives to zero
+            # Use in-place clipping
             np.clip(row_probs, 0, None, out=row_probs)
 
-            # Draw binomial samples for this node
-            transmission_indicator = np.random.binomial(n=1, p=row_probs)
+            # Only keep indices where transmission occurs
+            fired_indices = np.random.binomial(n=1, p=row_probs).nonzero()[0]
+            fired[fired_indices] = True
 
-            # Update fired array: if any target fired for this node, mark it
-            fired |= transmission_indicator == 1
-
-        # Now 'fired' is True for any target that got activated by at least one excitatory node
-        nxt = np.where(fired)[0]
-
+        # Use np.flatnonzero to find indices of True values
+        nxt = np.flatnonzero(fired)
         return nxt if len(nxt) > 0 else None
 
     def start(self, start_node):
@@ -253,8 +238,9 @@ class Cascade(BaseTraverse):
         return nxt
 
     def _check_visited(self):
-        self._active = np.setdiff1d(self._active, self._visited)
-        return len(self._active) > 0
+        if not self.allow_loops:
+            return all(node not in self._visited_set for node in self._active)
+        return True
 
     def _check_stop_nodes(self):
         self._active = np.setdiff1d(self._active, self.stop_nodes)
