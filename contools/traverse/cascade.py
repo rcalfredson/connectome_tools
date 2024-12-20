@@ -2,7 +2,7 @@ import numpy as np
 from anytree import Node
 from anytree import LevelOrderGroupIter
 from scipy.sparse import csr_matrix
-from .traverse import BaseTraverse
+from .base_traverse import BaseTraverse
 
 # Global references to avoid copying large arrays in each process
 GLOBAL_TRANSITION_PROBS = None
