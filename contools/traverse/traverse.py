@@ -1,6 +1,7 @@
 from tqdm import tqdm
 from multiprocessing import Pool
 import numpy as np
+import os
 import itertools
 import networkx as nx
 from .cascade import Cascade, worker_init
@@ -104,7 +105,7 @@ class TraverseDispatcher:
 
         # Initialize pool
         with Pool(
-            processes=4,
+            processes=os.cpu_count(),
             initializer=worker_init,
             initargs=(
                 transition_probs_file,
