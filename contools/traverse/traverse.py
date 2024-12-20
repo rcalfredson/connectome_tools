@@ -1,8 +1,8 @@
+from tqdm import tqdm
+from multiprocessing import Pool
 import numpy as np
 import itertools
 import networkx as nx
-from tqdm import tqdm
-from multiprocessing import Pool
 from .cascade import Cascade, worker_init
 
 
@@ -100,7 +100,7 @@ class TraverseDispatcher:
         shape = self.transition_probs.shape
 
         # Prepare arguments for each simulation
-        args_iter = [(start_node,) for _ in range(self.n_init)]
+        args_iter = [(node,) for node in [start_node]*self.n_init]
 
         # Initialize pool
         with Pool(
@@ -116,11 +116,11 @@ class TraverseDispatcher:
                 self.allow_loops,
             ),
         ) as pool:
-            results = pool.starmap(_run_single_simulation, args_iter)
+            hit_hist = np.zeros((n_verts, max_hops), dtype=int)
+            for res in tqdm(pool.imap_unordered(_run_single_simulation, args_iter), 
+                            total=self.n_init, disable=disable):
+                hit_hist += res
 
-        hit_hist = np.zeros((n_verts, max_hops), dtype=int)
-        for res in results:
-            hit_hist += res
         self.hit_hist_ = hit_hist
         return hit_hist
 
