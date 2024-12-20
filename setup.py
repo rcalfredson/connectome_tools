@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="contools-optimized",  # Updated name
-    version="2.0.2",
+    version="2.1.0",
     description="An optimized version of connectome_tools with performance enhancements and multi-processing",
     url="http://github.com/rcalfredson/connectome_tools",
     author="Michael Winding, updated by R.C. Alfredson",

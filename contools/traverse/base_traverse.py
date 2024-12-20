@@ -51,7 +51,8 @@ class BaseTraverse:
         if nxt is not None:
             self._active = nxt
             self._hop += 1
-            self.traversal_.append(nxt)
+            if self.record_traversal:
+                self.traversal_.append(nxt)
             if not self.allow_loops:
                 self._visited = np.union1d(self._visited, nxt)
             return True
