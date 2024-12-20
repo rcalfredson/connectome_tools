@@ -103,13 +103,14 @@ def to_transmission_matrix(
 
     probs_memmap.flush()
     print("Transmission probability memmap created successfully.")
-    return probs_memmap
+    return probs_memmap, neg_inds
 
 
 class Cascade(BaseTraverse):
     def __init__(
         self,
         transition_probs,
+        neg_inds,
         stop_nodes=[],
         max_hops=10,
         hit_hist=None,
@@ -125,6 +126,7 @@ class Cascade(BaseTraverse):
             record_traversal=record_traversal,
             allow_loops=allow_loops,
         )
+        self.neg_inds = neg_inds
         self.start_node_persistence = start_node_persistence
         self._initial_active = None
         self._initial_active_duration = 0

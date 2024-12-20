@@ -108,7 +108,6 @@ class BaseTraverse:
         record_traversal : bool, optional
             [description], by default True
         """
-        self.neg_inds = np.where(transition_probs.sum(axis=1)<0)[0]
         self.transition_probs = transition_probs
         self.hit_hist = hit_hist
         self.record_traversal = record_traversal
