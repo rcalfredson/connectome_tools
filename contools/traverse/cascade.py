@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from anytree import Node
 from anytree import LevelOrderGroupIter
@@ -28,6 +29,7 @@ def worker_init(
     Initializer for worker processes.
     This sets global variables so that each worker references the same shared arrays.
     """
+    np.random.seed(os.getpid())
     global GLOBAL_TRANSITION_PROBS, GLOBAL_NEG_INDS
     global GLOBAL_STOP_NODES, GLOBAL_MAX_HOPS, GLOBAL_RECORD_TRAVERSAL, GLOBAL_ALLOW_LOOPS
     global GLOBAL_START_NODE_PERSISTENCE
